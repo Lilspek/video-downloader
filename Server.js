@@ -2,13 +2,15 @@ const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 const contentDisposition = require('content-disposition');
-const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const ytdlp = require('yt-dlp-exec');  // 👈 use the npm package
 
 const app = express();
-const PORT = 3000;
+
+// 👇 FIX: Use environment variable for port (Render sets this)
+const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
@@ -55,7 +57,7 @@ function detectPlatform(url) {
     return 'unknown';
 }
 
-// Download endpoint using yt-dlp
+// Download endpoint using yt-dlp (via yt-dlp-exec)
 app.post('/download', async (req, res) => {
     const { videoUrl } = req.body;
     
@@ -68,58 +70,35 @@ app.post('/download', async (req, res) => {
     
     // Generate unique filename
     const outputId = crypto.randomBytes(8).toString('hex');
-    const outputPath = path.join(TEMP_DIR, `${outputId}.%(ext)s`);
-    const finalPath = path.join(TEMP_DIR, `${outputId}.mp4`);
+    const outputPath = path.join(TEMP_DIR, `${outputId}.mp4`); // we'll force mp4
     
-    // Build yt-dlp command with optimal settings
-    // For Snapchat specifically, this extracts the highest quality without watermark [citation:1]
-// For LISTING formats (use this temporarily)
-// For LISTING formats (use this temporarily)
-let command = `"C:\\Users\\USER\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python313\\Scripts\\yt-dlp.exe" -f "best" "${videoUrl}" -o "${outputPath}"`;    // Output template
-    command += ` -o "${outputPath}"`;
-    
-    // Add URL
-    command += ` "${videoUrl}"`;
-    
-    // Add cookies from browser (helps with platforms that require auth)
-    // You can also provide a cookies.txt file
-    // command += ` --cookies-from-browser chrome`;
-    
-    console.log('Executing:', command);
-    
-    // Execute yt-dlp
-    exec(command, { maxBuffer: 1024 * 1024 * 100 }, async (error, stdout, stderr) => {
-        if (error) {
-            console.error('yt-dlp error:', error);
-            console.error('stderr:', stderr);
-            return res.status(500).json({ 
-                error: 'Failed to download video', 
-                details: stderr || error.message 
-            });
-        }
+    try {
+        // Use yt-dlp-exec to download the video
+        // It automatically uses the correct binary for the platform (Linux on Render)
+        await ytdlp(videoUrl, {
+            format: 'best',           // best quality
+            output: outputPath,        // save to this path
+            // You can add more options if needed, e.g.:
+            // cookiesFromBrowser: 'chrome',   // if you need cookies
+        });
         
-        console.log('yt-dlp stdout:', stdout);
+        console.log('Download completed, file saved to:', outputPath);
         
-        // Find the downloaded file (yt-dlp might output different extension)
-        const files = fs.readdirSync(TEMP_DIR);
-        const downloadedFile = files.find(f => f.startsWith(outputId));
-        
-        if (!downloadedFile) {
+        // Check if file exists
+        if (!fs.existsSync(outputPath)) {
             return res.status(500).json({ error: 'Downloaded file not found' });
         }
-        
-        const filePath = path.join(TEMP_DIR, downloadedFile);
         
         // Send the file to client
         res.setHeader('Content-Disposition', contentDisposition(`video_${platform}.mp4`));
         res.setHeader('Content-Type', 'video/mp4');
         
-        const fileStream = fs.createReadStream(filePath);
+        const fileStream = fs.createReadStream(outputPath);
         fileStream.pipe(res);
         
         // Clean up after sending
         fileStream.on('end', () => {
-            fs.unlink(filePath, (err) => {
+            fs.unlink(outputPath, (err) => {
                 if (err) console.error('Error deleting temp file:', err);
             });
         });
@@ -130,7 +109,13 @@ let command = `"C:\\Users\\USER\\AppData\\Local\\Packages\\PythonSoftwareFoundat
                 res.status(500).json({ error: 'Stream failed' });
             }
         });
-    });
+    } catch (error) {
+        console.error('yt-dlp error:', error);
+        res.status(500).json({ 
+            error: 'Failed to download video', 
+            details: error.message 
+        });
+    }
 });
 
 // Alternative: Direct download for simple video URLs (fallback)
