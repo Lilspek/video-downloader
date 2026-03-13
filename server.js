@@ -5,8 +5,7 @@ const contentDisposition = require('content-disposition');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const ytdlp = require('child_process.exec');  // 👈 use the npm package
-
+const { exec } = require('child_process.exec');
 const app = express();
 
 // 👇 FIX: Use environment variable for port (Render sets this)
