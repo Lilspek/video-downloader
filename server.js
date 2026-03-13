@@ -5,7 +5,7 @@ const contentDisposition = require('content-disposition');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const ytdlp = require('yt-dlp-exec');  // 👈 use the npm package
+const ytdlp = require('child_process.exec');  // 👈 use the npm package
 
 const app = express();
 
@@ -58,6 +58,12 @@ function detectPlatform(url) {
 }
 
 // Download endpoint using yt-dlp (via yt-dlp-exec)
+const { exec } = require('child_process');
+const util = require('util');
+const execPromise = util.promisify(exec);
+
+// ... (other requires and code)
+
 app.post('/download', async (req, res) => {
     const { videoUrl } = req.body;
     
@@ -68,35 +74,28 @@ app.post('/download', async (req, res) => {
     const platform = detectPlatform(videoUrl);
     console.log(`Processing ${platform} URL: ${videoUrl}`);
     
-    // Generate unique filename
     const outputId = crypto.randomBytes(8).toString('hex');
-    const outputPath = path.join(TEMP_DIR, `${outputId}.mp4`); // we'll force mp4
+    const outputPath = path.join(TEMP_DIR, `${outputId}.mp4`);
     
     try {
-        // Use yt-dlp-exec to download the video
-        // It automatically uses the correct binary for the platform (Linux on Render)
-        await ytdlp(videoUrl, {
-            format: 'best',           // best quality
-            output: outputPath,        // save to this path
-            // You can add more options if needed, e.g.:
-            // cookiesFromBrowser: 'chrome',   // if you need cookies
-        });
+        // Use global yt-dlp command
+        const command = `yt-dlp -f best "${videoUrl}" -o "${outputPath}"`;
+        console.log('Executing:', command);
         
-        console.log('Download completed, file saved to:', outputPath);
+        const { stdout, stderr } = await execPromise(command);
+        console.log('yt-dlp stdout:', stdout);
+        if (stderr) console.error('yt-dlp stderr:', stderr);
         
-        // Check if file exists
         if (!fs.existsSync(outputPath)) {
             return res.status(500).json({ error: 'Downloaded file not found' });
         }
         
-        // Send the file to client
         res.setHeader('Content-Disposition', contentDisposition(`video_${platform}.mp4`));
         res.setHeader('Content-Type', 'video/mp4');
         
         const fileStream = fs.createReadStream(outputPath);
         fileStream.pipe(res);
         
-        // Clean up after sending
         fileStream.on('end', () => {
             fs.unlink(outputPath, (err) => {
                 if (err) console.error('Error deleting temp file:', err);
